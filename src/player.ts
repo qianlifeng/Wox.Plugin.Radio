@@ -1,6 +1,6 @@
 import { spawn, ChildProcess } from "node:child_process"
 import { randomUUID } from "node:crypto"
-import { unlink } from "node:fs/promises"
+import { mkdtemp, rm } from "node:fs/promises"
 import { Socket, createConnection } from "node:net"
 import { join } from "node:path"
 import { Station } from "./directory"
@@ -25,6 +25,7 @@ export class RadioPlayer {
   private child?: ChildProcess
   private socket?: Socket
   private socketPath = ""
+  private socketDirectory = ""
   private generation = 0
   private pending = new Map<number, (error: Error | undefined) => void>()
   private nextID = 0
@@ -48,12 +49,31 @@ export class RadioPlayer {
     this.stopProcess()
     const generation = ++this.generation
     const name = `wox-radio-${randomUUID()}`
-    this.socketPath = process.platform === "win32" ? `\\\\.\\pipe\\${name}` : join(this.cacheFolder, `${name}.sock`)
     if (process.platform !== "win32" && !this.cacheFolder) {
       this.publish({ station, status: "error", error: { key: "cache_unavailable" } })
       return
     }
     this.publish({ station, status: "connecting", error: undefined, spectrum: undefined, tune: { id: generation, startedAt: Date.now() } })
+    if (process.platform === "win32") {
+      this.socketPath = `\\\\.\\pipe\\${name}`
+    } else {
+      // macOS limits Unix socket paths to 103 bytes; the plugin cache path can
+      // exceed that even before a socket filename is appended. A private short
+      // temporary directory also keeps other users from connecting to mpv.
+      let directory: string
+      try {
+        directory = await mkdtemp("/tmp/wox-radio-")
+      } catch (error) {
+        this.fail(generation, { key: "player_start_failed", values: { error: error instanceof Error ? error.message : String(error) } })
+        return
+      }
+      if (generation !== this.generation) {
+        void rm(directory, { recursive: true, force: true }).catch(() => {})
+        return
+      }
+      this.socketDirectory = directory
+      this.socketPath = join(directory, "mpv.sock")
+    }
     const child = spawn(
       this.executable,
       ["--no-config", "--no-terminal", "--no-video", "--force-window=no", `--volume=${this.state.volume}`, `--input-ipc-server=${this.socketPath}`, "--", station.url_resolved],
@@ -205,8 +225,9 @@ export class RadioPlayer {
     child?.kill()
     for (const done of this.pending.values()) done(new Error("Player stopped"))
     this.pending.clear()
-    const path = this.socketPath
     this.socketPath = ""
-    if (path && process.platform !== "win32") void unlink(path).catch(() => {})
+    const directory = this.socketDirectory
+    this.socketDirectory = ""
+    if (directory) void rm(directory, { recursive: true, force: true }).catch(() => {})
   }
 }

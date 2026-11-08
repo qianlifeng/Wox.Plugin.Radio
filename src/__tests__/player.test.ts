@@ -37,9 +37,15 @@ test("player keeps playback independent and uses IPC for pause and volume", asyn
     process.nextTick(() => socket.emit("connect"))
     return socket
   }) as never)
-  const player = new RadioPlayer("cache")
+  const player = new RadioPlayer(`/a/very/long/cache/path/${"x".repeat(150)}`)
   player.onSpectrum = jest.fn()
   await player.play(station)
+  if (process.platform !== "win32") {
+    const ipcPath = jest.mocked(createConnection).mock.calls[0][0] as string
+    expect(Buffer.byteLength(ipcPath)).toBeLessThanOrEqual(103)
+    expect(ipcPath).toMatch(/^\/tmp\/wox-radio-[^/]+\/mpv\.sock$/)
+    expect(jest.mocked(spawn).mock.calls[0][1]).toContain(`--input-ipc-server=${ipcPath}`)
+  }
   expect(player.state.status).toBe("connecting")
   socket.emit("data", Buffer.from('{"event":"playback-restart"}\n'))
   expect(player.state.status).toBe("playing")
