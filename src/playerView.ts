@@ -19,112 +19,122 @@ export interface PlayerViewPreview {
 
 type Style = Record<string, unknown>
 const text = (value: string, style: Style) => ({ type: "text", props: { text: value, style } })
-const sweepDuration = 720
-const signalHeight = 162
-const baseline = 96
+const dotSize = 2.4
+const waveDuration = 80
+const handoffDuration = 240
+const frameInterval = 40
 const highlightColor = { light: "$accent", dark: "$focus" }
-const strokes = Array.from({ length: 47 }, (_, i) => {
-  const x = i / 46
-  const crest = 82 * Math.exp(-Math.pow((x - 0.72) / 0.17, 2))
-  const trough = 52 * Math.exp(-Math.pow((x - 0.26) / 0.15, 2))
-  const displacement = crest - trough
-  return { top: displacement > 0 ? baseline - displacement : baseline, height: Math.max(2, Math.abs(displacement)) }
+const tuningDuration = 2400
+const tuningRise = 400
+const spectrumGrace = 1000
+const idleLevel = 0.15
+const waveColumnCount = 49
+const waveRowCount = 32
+const rowWidth = (waveColumnCount - 1) * 8 + dotSize
+const dotPaths = Array.from({ length: waveColumnCount }, (_, column) => `M${column * 8 + dotSize / 2} ${dotSize / 2}h.05`)
+const rowOpacity = Array.from({ length: waveRowCount }, (_, row) => (0.015 + (0.485 * (waveRowCount - 1 - row)) / (waveRowCount - 1)).toFixed(3))
+const chartPoints = Array.from({ length: waveColumnCount * waveRowCount }, (_, index) => ({
+  x: index % waveColumnCount,
+  y: waveRowCount - 0.5 - Math.floor(index / waveColumnCount)
+}))
+// Invisible endpoints keep the domain fixed even when no dots are visible.
+chartPoints.push({ x: 0, y: 0 }, { x: waveColumnCount - 1, y: waveRowCount })
+const chartColors = rowOpacity.flatMap(opacity => {
+  const alpha = Math.round(255 * Number(opacity))
+    .toString(16)
+    .padStart(2, "0")
+  return Array.from({ length: waveColumnCount }, () => ({ light: `#000000${alpha}`, dark: `#ffffff${alpha}` }))
 })
 
-function spectrumBars(levels: readonly number[]) {
-  const columns = 41
-  return Array.from({ length: columns }, (_, index) => {
-    const band = (index / (columns - 1)) * (levels.length - 1)
-    const low = Math.floor(band)
-    const fraction = band - low
-    const blend = fraction * fraction * (3 - 2 * fraction)
-    const level = levels[low] + (levels[Math.ceil(band)] - levels[low]) * blend
-    const height = 2.5 + level * 88
-    const stroke = (key: string, anchor: Style, height: number, opacity: number) => ({
-      type: "view",
-      key,
-      props: {
-        style: { ...anchor, width: 2.6, height, borderRadius: 1.3, backgroundColor: highlightColor, opacity },
-        transition: { properties: ["height", "opacity"], duration: 135 }
-      }
-    })
-    return {
-      type: "stack",
-      key: `band-${index}`,
-      props: { style: { width: 2.6, height: signalHeight } },
-      children: [stroke("upper", { bottom: signalHeight - baseline }, height, 0.44 + level * 0.54), stroke("reflection", { top: baseline + 3 }, Math.max(1, height * 0.32), 0.1 + level * 0.22)]
+function dotDiameter(level: number, fromBottom: number): number {
+  const coverage = Math.max(0, Math.min(1, level * waveRowCount - fromBottom))
+  return Math.round(10 * dotSize * Math.sqrt(coverage)) / 10
+}
+
+function signalRadii(levels: readonly number[]): number[] {
+  const radii = rowOpacity.flatMap((_, row) => levels.map(level => dotDiameter(level, waveRowCount - 1 - row) / 2))
+  radii.push(0, 0)
+  return radii
+}
+
+function signalChart(pointRadii: number[]) {
+  return {
+    type: "scatter-chart",
+    key: "signal",
+    props: {
+      style: { flex: 1 },
+      chart: { hover: false, pointRadius: dotSize / 2, plotPadding: 0, colors: [...chartColors, "#00000000", "#00000000"] },
+      points: chartPoints,
+      pointRadii
     }
+  }
+}
+
+function playingSpectrum(state: PlaybackState): readonly number[] | undefined {
+  return state.status === "playing" && state.spectrum?.length ? state.spectrum : undefined
+}
+
+function tuningAge({ status, tune, spectrum }: PlaybackState, now: number): number | undefined {
+  if (!tune) return undefined
+  const waitingForSpectrum = status === "playing" && !spectrum?.length && tune.connectedAt !== undefined && now - tune.connectedAt < spectrumGrace
+  return status === "connecting" || waitingForSpectrum ? Math.max(0, now - tune.startedAt) : undefined
+}
+
+function waveLevels(spectrum: readonly number[] | undefined, age = 0): number[] {
+  const progress = Math.min(1, age / tuningRise)
+  const ramp = progress * progress * (3 - 2 * progress)
+  return Array.from({ length: waveColumnCount }, (_, index) => {
+    const position = index / (waveColumnCount - 1)
+    let level = idleLevel
+    if (spectrum) {
+      const band = position * (spectrum.length - 1)
+      const low = Math.floor(band)
+      const fraction = band - low
+      const blend = fraction * fraction * (3 - 2 * fraction)
+      level = spectrum[low] + (spectrum[Math.ceil(band)] - spectrum[low]) * blend
+    } else if (ramp > 0) {
+      const phase = position * 1.5 - 0.25 - (age % tuningDuration) / tuningDuration
+      const wave = 0.44 + 0.19 * Math.cos(2 * Math.PI * phase)
+      level += (wave - idleLevel) * ramp
+    }
+    return level
   })
 }
 
-function signalBand(state: PlaybackState, locale: RadioLocale) {
-  const elapsed = state.tune ? Math.max(0, Date.now() - state.tune.startedAt) : sweepDuration
-  const sweep = state.tune && elapsed < sweepDuration ? { playbackId: String(state.tune.id), elapsed, duration: sweepDuration } : undefined
-  const spectrum = state.status === "playing" && !sweep && state.spectrum?.length ? state.spectrum : undefined
+function signalBand(levels: readonly number[]) {
   return {
     type: "column",
     key: "signal",
-    props: { style: { flex: 1, alignItems: "stretch", justifyContent: "center", overflow: "hidden" } },
-    children: [
-      {
-        type: "stack",
-        props: { style: { height: signalHeight } },
-        children: [
-          { type: "view", props: { style: { left: 0, right: 0, top: baseline, height: 1, backgroundColor: "$border" } } },
-          {
-            type: "row",
-            props: { style: { left: 0, right: 0, top: 0, height: signalHeight, justifyContent: "space-between" } },
-            children: spectrum
-              ? spectrumBars(spectrum)
-              : strokes.map(({ top, height }, index) => {
-                  const start = 24 + index * 10
-                  const opacity = state.station ? 0.74 : 0.44
-                  const bar = { top, width: 1.4, height, borderRadius: 1 }
-                  return {
-                    type: "stack",
-                    key: `stroke-${index}`,
-                    props: { style: { width: 1.4, height: signalHeight } },
-                    children: [
-                      { type: "view", props: { style: { ...bar, backgroundColor: highlightColor, opacity } } },
-                      ...(sweep
-                        ? [
-                            {
-                              type: "view",
-                              key: "scan",
-                              props: {
-                                style: { ...bar, backgroundColor: "$text", opacity: 0 },
-                                // Staggered native keyframes scale the scan to the available width.
-                                timeline: {
-                                  ...sweep,
-                                  keyframes: [
-                                    { at: 0, opacity: 0 },
-                                    { at: start, opacity: 0 },
-                                    { at: start + 54, opacity: 0.92 },
-                                    { at: start + 150, opacity: 0 },
-                                    { at: sweepDuration, opacity: 0 }
-                                  ]
-                                }
-                              }
-                            }
-                          ]
-                        : [])
-                    ]
-                  }
-                })
-          },
-          ...(spectrum
-            ? [
-                {
-                  type: "row",
-                  key: "frequency-labels",
-                  props: { style: { left: 0, right: 0, bottom: 14, justifyContent: "space-between" } },
-                  children: (["low", "mid", "high"] as const).map(key => text(locale.t(key), { color: "$textSecondary", fontFamily: "monospace", fontSize: 9, opacity: 0.72 }))
+    props: { style: { flex: 1, alignItems: "stretch", overflow: "hidden" } },
+    // One image per row keeps the adaptive grid without laying out a widget for each dot.
+    children: Array.from({ length: waveRowCount }, (_, row) => {
+      const fromBottom = waveRowCount - 1 - row
+      const paths = new Map<number, string>()
+      levels.forEach((level, column) => {
+        const diameter = dotDiameter(level, fromBottom)
+        if (diameter > 0) paths.set(diameter, (paths.get(diameter) ?? "") + dotPaths[column])
+      })
+      const strokes = Array.from(paths, ([diameter, path]) => `<path stroke-width="${diameter}" d="${path}"/>`).join("")
+      return {
+        type: "column",
+        props: { style: { flex: 1, alignItems: "stretch", justifyContent: "center" } },
+        children: strokes
+          ? [
+              {
+                type: "image",
+                props: {
+                  source: {
+                    imageType: "svg",
+                    imageData: `<svg viewBox="0 0 ${rowWidth} ${dotSize}"><g fill="none" stroke="var(--wox-theme-icon-color)" stroke-linecap="round" stroke-opacity="${rowOpacity[row]}">${strokes}</g></svg>`
+                  },
+                  fit: "fill",
+                  style: { width: rowWidth, height: dotSize }
                 }
-              ]
-            : [])
-        ]
+              }
+            ]
+          : []
       }
-    ]
+    })
   }
 }
 
@@ -166,7 +176,11 @@ function transportButton(key: string, label: string, icon: string, active: boole
   }
 }
 
-export function playerTree(state: PlaybackState, favorite: boolean, locale = english): string {
+export function playerTree(state: PlaybackState, favorite: boolean, locale = english, levels = waveLevels(playingSpectrum(state), tuningAge(state, Date.now()))): string {
+  return playerDocument(state, favorite, locale, signalBand(levels))
+}
+
+function playerDocument(state: PlaybackState, favorite: boolean, locale: RadioLocale, signal: object): string {
   const playing = state.status === "playing"
   const paused = state.status === "paused"
   const tuning = state.status === "connecting"
@@ -204,8 +218,7 @@ export function playerTree(state: PlaybackState, favorite: boolean, locale = eng
             }
           ]
         },
-        signalBand(state, locale),
-        { type: "view", props: { style: { height: 1, backgroundColor: "$border" } } },
+        signal,
         {
           type: "row",
           key: "controls",
@@ -243,16 +256,24 @@ export function createPlayerView(
   read: () => { state: PlaybackState; favorite: boolean; locale?: RadioLocale },
   actions: PlayerViewActions,
   update: (preview: PlayerViewPreview) => Promise<boolean>,
-  onError: (error: unknown) => void
+  onError: (error: unknown) => void,
+  updateRadii?: (documentID: string, radii: number[]) => Promise<boolean>
 ) {
   let running = false
   let dirty = false
   let visible = false
+  let frameTick: NodeJS.Timeout | undefined
+  let sent: string | undefined
+  let chrome: string | undefined
+  let sentRadii: string | undefined
+  let motion: { source: readonly number[] | string | undefined; from: number[]; to: number[]; startedAt: number; duration: number } | undefined
   const preview: PlayerViewPreview = {
     PreviewType: "woxview",
     get PreviewData() {
-      const { state, favorite, locale } = read()
-      return playerTree(state, favorite, locale)
+      if (sent !== undefined) return sent
+      const { state, favorite, locale = english } = read()
+      const levels = waveLevels(playingSpectrum(state), tuningAge(state, Date.now()))
+      return playerDocument(state, favorite, locale, updateRadii ? signalChart(signalRadii(levels)) : signalBand(levels))
     },
     WoxViewID: randomUUID(),
     async OnWoxViewEvent(_ctx, event) {
@@ -263,6 +284,11 @@ export function createPlayerView(
       }
       if (event.Type === "hide") {
         visible = false
+        clearTimeout(frameTick)
+        sent = undefined
+        chrome = undefined
+        sentRadii = undefined
+        motion = undefined
         return
       }
       try {
@@ -278,19 +304,81 @@ export function createPlayerView(
   function refresh(): void {
     dirty = true
     if (!visible || running) return
+    clearTimeout(frameTick)
     running = true
     void (async () => {
       try {
+        let animate = false
         while (visible && dirty) {
           dirty = false
-          if (!(await update({ ...preview }))) break
+          const { state, favorite, locale = english } = read()
+          const now = Date.now()
+          const age = tuningAge(state, now)
+          const spectrum = playingSpectrum(state)
+          const source = spectrum ?? (age === undefined ? undefined : `${state.tune?.startedAt}:${Math.floor(age / waveDuration)}`)
+          let levels = motion?.to
+          if (motion && motion.from !== motion.to && now < motion.startedAt + motion.duration) {
+            const { from, to, startedAt, duration } = motion
+            const progress = Math.max(0, (now - startedAt) / duration)
+            levels = to.map((level, index) => from[index] + (level - from[index]) * progress)
+          }
+          if (!motion || motion.source !== source) {
+            const to = waveLevels(spectrum, age)
+            const spectrumAt = state.tune?.spectrumAt
+            const duration = spectrumAt !== undefined && now - spectrumAt < handoffDuration ? handoffDuration : waveDuration
+            motion = { source, from: levels ?? to, to, startedAt: now, duration }
+          }
+          animate = age !== undefined || (motion.from !== motion.to && now < motion.startedAt + motion.duration)
+          const wave = levels ?? motion.to
+          if (updateRadii) {
+            const nextChrome = playerDocument(state, favorite, locale, { type: "spacer" })
+            const radii = signalRadii(wave)
+            const snapshot = JSON.stringify(radii)
+            if (nextChrome === chrome) {
+              if (snapshot !== sentRadii) {
+                sentRadii = snapshot
+                if (!(await updateRadii(preview.WoxViewID, radii))) {
+                  chrome = undefined
+                  return
+                }
+              }
+              continue
+            }
+            chrome = nextChrome
+            sentRadii = snapshot
+            sent = playerDocument(state, favorite, locale, signalChart(radii))
+            if (!(await update({ ...preview }))) {
+              chrome = undefined
+              sent = undefined
+              return
+            }
+            continue
+          }
+          const data = playerTree(state, favorite, locale, wave)
+          if (data !== sent) {
+            sent = data
+            if (!(await update({ ...preview }))) {
+              sent = undefined
+              return
+            }
+          }
         }
+        if (visible && animate) frameTick = setTimeout(refresh, frameInterval).unref()
       } catch (error) {
+        chrome = undefined
+        sent = undefined
         onError(error)
       } finally {
         running = false
       }
     })()
   }
-  return { preview, refresh }
+  return {
+    preview,
+    refresh,
+    get initialPreview() {
+      // The launcher retains the mounted preview while the user keeps typing.
+      return updateRadii && visible ? undefined : preview
+    }
+  }
 }

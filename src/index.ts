@@ -5,7 +5,10 @@ import { RadioPlayer } from "./player"
 import { MpvInstaller } from "./mpv"
 import { createPlayerView, PlayerViewPreview } from "./playerView"
 
-type PreviewAPI = PublicAPI & { UpdatePluginPreview(ctx: Context, option: { Preview: PlayerViewPreview }): Promise<{ Success: boolean }> }
+type PreviewAPI = PublicAPI & {
+  UpdatePluginPreview(ctx: Context, option: { Preview: PlayerViewPreview }): Promise<{ Success: boolean }>
+  UpdatePluginPreviewData?(ctx: Context, option: { WoxViewID: string; WoxViewNodeKey: string; WoxViewData: { pointRadii: number[] } }): Promise<{ Success: boolean }>
+}
 type Session = { filter: StationFilter; locale: RadioLocale; view: ReturnType<typeof createPlayerView>; resultContext?: Context; resultIDs?: Set<string>; marked?: string }
 const filterGroups = [
   { id: "genre", field: "tags", key: "g" },
@@ -189,7 +192,10 @@ function sessionFor(ctx: Context, query: Query): Session {
       async preview => (await api.UpdatePluginPreview(ctx, { Preview: preview })).Success,
       error => {
         void api.Log(ctx, "Error", `Radio preview: ${String(error)}`)
-      }
+      },
+      typeof api.UpdatePluginPreviewData === "function"
+        ? async (WoxViewID, pointRadii) => (await api.UpdatePluginPreviewData!(ctx, { WoxViewID, WoxViewNodeKey: "signal", WoxViewData: { pointRadii } })).Success
+        : undefined
     )
     session = { filter, view, locale: english }
     sessions.set(key, session)
@@ -371,7 +377,7 @@ export const plugin: Plugin = {
         Results: results,
         Refinements: snapshot ? refinements(snapshot.categories, filter, query, locale) : [],
         Layout: { ResultPreviewWidthRatio: 0.42 },
-        PluginPreview: session.view.preview
+        PluginPreview: session.view.initialPreview
       } as QueryResponse
     }
     const selections = filterGroups.flatMap(group => {

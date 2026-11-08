@@ -13,7 +13,7 @@ export interface PlaybackState {
   status: PlaybackStatus
   volume: number
   error?: RadioMessage
-  tune?: { id: number; startedAt: number }
+  tune?: { startedAt: number; connectedAt?: number; spectrumAt?: number }
   spectrum?: number[]
 }
 
@@ -53,7 +53,7 @@ export class RadioPlayer {
       this.publish({ station, status: "error", error: { key: "cache_unavailable" } })
       return
     }
-    this.publish({ station, status: "connecting", error: undefined, spectrum: undefined, tune: { id: generation, startedAt: Date.now() } })
+    this.publish({ station, status: "connecting", error: undefined, spectrum: undefined, tune: { startedAt: Date.now() } })
     if (process.platform === "win32") {
       this.socketPath = `\\\\.\\pipe\\${name}`
     } else {
@@ -89,9 +89,16 @@ export class RadioPlayer {
       readSpectrum(child.stdout, spectrum => {
         if (generation !== this.generation || this.state.status !== "playing") return
         const now = Date.now()
-        if (now - lastFrame < 80) return
+        const elapsed = now - lastFrame
+        if (elapsed < 80) return
         lastFrame = now
-        this.state = { ...this.state, spectrum }
+        const { spectrum: previous, tune } = this.state
+        const release = Math.exp(-elapsed / 230)
+        this.state = {
+          ...this.state,
+          tune: !previous && tune ? { ...tune, spectrumAt: now } : tune,
+          spectrum: previous ? spectrum.map((level, index) => level + Math.max(0, previous[index] - level) * release) : spectrum
+        }
         this.onSpectrum()
       })
     }
@@ -159,7 +166,10 @@ export class RadioPlayer {
             this.pending.delete(event.request_id)
             resolve?.(event.error === "success" ? undefined : new Error(String(event.error)))
           } else if (event.event === "playback-restart" || (event.event === "property-change" && event.name === "core-idle" && event.data === false)) {
-            if (this.state.status === "connecting") this.publish({ status: "playing" })
+            if (this.state.status === "connecting") {
+              const { tune } = this.state
+              this.publish({ status: "playing", tune: tune && { ...tune, connectedAt: Date.now() } })
+            }
           } else if (event.event === "end-file" && event.reason === "error") {
             this.fail(generation, event.file_error ? { key: "stream_failed", values: { error: String(event.file_error) } } : { key: "stream_unavailable" })
           }
@@ -193,7 +203,7 @@ export class RadioPlayer {
 
   async setPaused(paused: boolean): Promise<void> {
     await this.command(["set_property", "pause", paused])
-    this.publish({ status: paused ? "paused" : "playing", spectrum: undefined })
+    this.publish({ status: paused ? "paused" : "playing", tune: undefined, spectrum: undefined })
   }
 
   async setVolume(volume: number): Promise<void> {
@@ -213,7 +223,7 @@ export class RadioPlayer {
     if (generation !== this.generation) return
     this.stopProcess()
     ++this.generation
-    this.publish({ status: "error", error, spectrum: undefined })
+    this.publish({ status: "error", error, tune: undefined, spectrum: undefined })
   }
 
   private stopProcess(): void {

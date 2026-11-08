@@ -49,15 +49,27 @@ test("player keeps playback independent and uses IPC for pause and volume", asyn
   expect(player.state.status).toBe("connecting")
   socket.emit("data", Buffer.from('{"event":"playback-restart"}\n'))
   expect(player.state.status).toBe("playing")
-  stdout.write("frame:0\n")
-  for (const [index, level] of ["-11", "-14", "-inf", "-inf", "-inf", "-inf", "-inf", "-inf"].entries()) {
-    stdout.write(`lavfi.astats.${index + 1}.RMS_level=${level}\n`)
+  expect(player.state.tune?.connectedAt).toEqual(expect.any(Number))
+  const frameTime = Date.now()
+  function writeFrame(frame: number, bass: string, lowMid: string) {
+    const clock = jest.spyOn(Date, "now").mockReturnValueOnce(frameTime + frame * 100)
+    stdout.write(`frame:${frame}\n`)
+    for (const [index, level] of [bass, lowMid, "-inf", "-inf", "-inf", "-inf", "-inf", "-inf"].entries()) {
+      stdout.write(`lavfi.astats.${index + 1}.RMS_level=${level}\n`)
+    }
+    clock.mockRestore()
   }
+  writeFrame(0, "-11", "-14")
   expect(player.onSpectrum).toHaveBeenCalledTimes(1)
   const levels = player.state.spectrum!
   expect(levels[0]).toBeLessThan(1)
   expect(levels[0]).toBeGreaterThan(levels[1])
   expect(levels[2]).toBe(0)
+  writeFrame(1, "-inf", "-11")
+  expect(player.state.tune?.spectrumAt).toBe(frameTime)
+  const [released, attacked] = player.state.spectrum!
+  expect(released).toBeCloseTo(levels[0] * Math.exp(-100 / 230))
+  expect(attacked).toBeCloseTo(levels[0])
   await player.setPaused(true)
   await player.setVolume(150)
   expect(player.state.status).toBe("paused")
