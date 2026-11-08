@@ -1,6 +1,6 @@
 .PHONY: help init check-init check-dev-deps install reinstall clean lint format build test package dev
 
-PLUGIN_NAME := {{.Name}}
+PLUGIN_NAME := radio
 
 DIST_DIR := dist
 SRC_DIR := src
@@ -53,7 +53,7 @@ else
 endif
 
 dev: check-init check-dev-deps
-	$(NODEMON) --watch $(SRC_DIR) --watch images --watch plugin.json --ext json,ts,js,mjs,png --exec "$(MAKE) build"
+	$(NODEMON) --watch $(SRC_DIR) --watch images --watch lang --watch plugin.json --ext json,ts,js,mjs,png --exec "$(MAKE) build"
 
 lint: check-init check-dev-deps
 	$(ESLINT) $(SRC_DIR)
@@ -70,10 +70,10 @@ endif
 	$(NCC) build $(SRC_DIR)/index.ts -o $(DIST_DIR)
 	$(BABEL) $(DIST_DIR) --out-dir $(DIST_DIR)
 ifeq ($(OS),Windows_NT)
-	$(POWERSHELL) "Copy-Item 'images' -Destination '$(DIST_DIR)' -Recurse"
+	$(POWERSHELL) "Copy-Item 'images', 'lang' -Destination '$(DIST_DIR)' -Recurse"
 	$(POWERSHELL) "Copy-Item 'plugin.json' -Destination '$(DIST_DIR)'"
 else
-	cp -r images $(DIST_DIR)
+	cp -r images lang $(DIST_DIR)
 	cp plugin.json $(DIST_DIR)
 endif
 
