@@ -1,46 +1,46 @@
 {
-    "Id": "2bc0acfb-88c9-49d1-9acf-7d93ab315a53",
-    "TriggerKeywords": [
-        "radio"
-    ],
-    "Name": "i18n:radio_name",
-    "Description": "i18n:radio_description",
-    "Author": "qianlifeng",
-    "Version": "1.0.0",
-    "MinWoxVersion": "2.5.0",
-    "Runtime": "nodejs",
-    "Website": "https://github.com/qianlifeng/Wox.Plugin.Radio",
-    "Entry": "index.js",
-    "Icon": "relative:images/radio.png",
-    "I18n": {
-        "en_US": {
-            "radio_name": "Radio",
-            "radio_description": "Play internet radio in Wox"
-        },
-        "zh_CN": {
-            "radio_name": "电台",
-            "radio_description": "在 Wox 中收听网络电台"
-        },
-        "ru_RU": {
-            "radio_name": "Радио",
-            "radio_description": "Слушайте интернет-радио в Wox"
-        },
-        "pt_BR": {
-            "radio_name": "Rádio",
-            "radio_description": "Ouça rádio pela internet no Wox"
-        },
-        "ko_KR": {
-            "radio_name": "라디오",
-            "radio_description": "Wox에서 인터넷 라디오를 들으세요"
-        },
-        "ja_JP": {
-            "radio_name": "ラジオ",
-            "radio_description": "Wox でインターネットラジオを聴く"
-        }
+  "Id": "2bc0acfb-88c9-49d1-9acf-7d93ab315a53",
+  "TriggerKeywords": [
+    "radio"
+  ],
+  "Name": "i18n:radio_name",
+  "Description": "i18n:radio_description",
+  "Author": "qianlifeng",
+  "Version": "0.0.9",
+  "MinWoxVersion": "2.5.0",
+  "Runtime": "nodejs",
+  "Website": "https://github.com/qianlifeng/Wox.Plugin.Radio",
+  "Entry": "index.js",
+  "Icon": "relative:images/radio.png",
+  "I18n": {
+    "en_US": {
+      "radio_name": "Radio",
+      "radio_description": "Play internet radio in Wox"
     },
-    "SupportedOS": [
-        "windows",
-        "linux",
-        "darwin"
-    ]
+    "zh_CN": {
+      "radio_name": "电台",
+      "radio_description": "在 Wox 中收听网络电台"
+    },
+    "ru_RU": {
+      "radio_name": "Радио",
+      "radio_description": "Слушайте интернет-радио в Wox"
+    },
+    "pt_BR": {
+      "radio_name": "Rádio",
+      "radio_description": "Ouça rádio pela internet no Wox"
+    },
+    "ko_KR": {
+      "radio_name": "라디오",
+      "radio_description": "Wox에서 인터넷 라디오를 들으세요"
+    },
+    "ja_JP": {
+      "radio_name": "ラジオ",
+      "radio_description": "Wox でインターネットラジオを聴く"
+    }
+  },
+  "SupportedOS": [
+    "windows",
+    "linux",
+    "darwin"
+  ]
 }
